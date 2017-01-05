@@ -1,5 +1,5 @@
 
-Simple 2D Trihexaflexagon generator
+Simple 3D Trihexaflexagon generator
 ===================================
 
 About
@@ -19,7 +19,7 @@ simple trihexaflexagons from images.
 Getting started
 ---------------
 
-    ./flexagon.py image1.jpg image2.jpg image3.jpg output.jpg
+    ./flexagon.py image1.jpg image2.jpg image3.jpg image4.jpg output.jpg
 
 
 The script takes the center area of each input image (aspect ratio is kept)
@@ -27,7 +27,9 @@ and downscales the larger two of the three images.
 
 
 The layout and captions of the patches follow the
-[image on the flexagon page][3].
+[image on the flexagon page][2]:
+
+![3D Flexagon](http://modarnis.com/flexagon/flex_3d/example_small_02.png)
 
 You can follow the instructions on the [page][2] for folding your flexagon.
 
@@ -53,4 +55,3 @@ This project is published under the [MIT License](./LICENSE).
 
 [1]: https://en.wikipedia.org/wiki/Flexagon
 [2]: http://modarnis.com/flexagon/
-[3]: http://modarnis.com/flexagon/flex_2d/example_large_01.png
