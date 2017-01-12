@@ -7,20 +7,15 @@
 # Daniel Prokesch <daniel.prokesch@gmail.com>
 ###############################################################################
 """USAGE: {} image1 image2 image3 image4 output"""
-import math
-from PIL import Image, ImageOps, ImageDraw
-from math import sqrt, sin, cos, pi
+from __future__ import print_function
 
 import sys
+from math import sin, cos, pi, sqrt
 
-# The flexagon is composed of small equilateral triangles.
-min_angle = pi / 3  # tiangle's smallest angle: 60 degree
-# min_angle = math.atan(0.5) * 2
-# The height equals width * sqrt(3)/2
-height_to_width = 1 / (2 * math.tan(min_angle / 2))
+from PIL import Image, ImageDraw
 
 
-def crop_size(img):
+def crop_size(img, height_to_width):
     """Crop the image to have the appropriate ratio for a flexagon."""
     width, height = img.size
     # could use fit, with the assumption that the height will be sufficient
@@ -39,11 +34,11 @@ def crop_size(img):
     return img.crop(box)
 
 
-def rot_trans(center, angle, new_center):
+def rot_scale_trans(center, scale_x_ratio, angle, new_center):
     """Return an array for PIL's affine transform.
 
     It describes a rotation of angle degrees around center, followed by a
-    translation to new_center.
+    scale, followed by a translation to new_center.
 
     According to PIL's documentation,
     'For each pixel (x, y) in the output image, the new value is taken from a
@@ -56,8 +51,10 @@ def rot_trans(center, angle, new_center):
     cosine, sine = cos(rho), sin(rho)
     cx, cy = center
     nx, ny = new_center
-    return [cosine, sine, -nx * cosine - ny * sine + cx,
-            -sine, cosine, nx * sine - ny * cosine + cy]
+    sw = scale_x_ratio
+    # This matrix is computed as this: https://goo.gl/fcgF56
+    return [cosine / sw, sine, cx - nx * cosine / sw - ny * sine,
+            -sine / sw, cosine, cy + nx * sine / sw - ny * cosine]
 
 
 def xform(mat, pt):
@@ -78,75 +75,78 @@ def xform_arr(mat, arr):
 
 ###############################################################################
 
-if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        print >> sys.stderr, __doc__.format(sys.argv[0])
-        exit(1)
+def main(input_files, output_file):
+    # The flexagon is composed of small equilateral triangles.
+    height_to_width = 2.0 / sqrt(3)
 
-    try:
-        images = [crop_size(Image.open(sys.argv[i])) for i in range(1, 5)]
-    except IOError as e:
-        print >> sys.stderr, e
-        exit(1)
+    images = [crop_size(Image.open(fn), height_to_width) for fn in input_files]
     common_size = min(img.size for img in images)
+    scale_all = 0.3
+    if scale_all != 1:
+        common_size = (common_size[0] * scale_all, common_size[1] * scale_all)
+    img_center = (common_size[0] / 2, common_size[1] / 2)
     for img in images:
         img.thumbnail(common_size)
 
-    triangle_width, triangle_height = map(lambda x: x / 2, common_size)
-    flexagon = Image.new("RGB", map(int, (2.5 * triangle_width, 7 * triangle_height)), color=(255, 255, 255))
-
+    in_triangle_height, in_triangle_width = map(lambda x: x / 2, common_size)
+    out_triangle_width = in_triangle_width
+    scale_height_ratio = 2 / sqrt(3)
+    out_triangle_height = in_triangle_height * scale_height_ratio
+    # add additional 1-pixel for line drawing
+    flexagon = Image.new("RGB", (int(7 * out_triangle_height), int(2.5 * out_triangle_width) + 1), color=(255, 255, 255))
 
     def paste_and_mask(img, angle_degree, new_center, poly_base):
         """Get a patch from img and paste it to the flexagon."""
-        mat = rot_trans(center=(triangle_width, triangle_height), angle=angle_degree, new_center=new_center)
+        mat = rot_scale_trans(center=img_center, angle=angle_degree, new_center=new_center,
+                              scale_x_ratio=scale_height_ratio)
         patch = img.transform(flexagon.size, Image.AFFINE, mat)
         mask = Image.new("1", flexagon.size)
         # The mask polygon is only translated. As rot_trans describes an axis
         # transformation, we specify the translation as center.
-        mask_trans = rot_trans(new_center, 0, (0, 0))
-        ImageDraw.Draw(mask).polygon(xform_arr(mask_trans, poly_base), fill=1)
+        mask_trans = rot_scale_trans(new_center, 1, 0, (0, 0))
+        poly_box = xform_arr(mask_trans, poly_base)
+        ImageDraw.Draw(mask).polygon(poly_box, fill=1)
         flexagon.paste(patch, (0, 0), mask)
+        ImageDraw.Draw(flexagon).polygon(poly_box, outline=(0, 0, 0))
+
+    diamond_mask = [(0, 0), (-out_triangle_width / 2, out_triangle_height), (-out_triangle_width, 0),
+                    (-out_triangle_width / 2, -out_triangle_height)]
+    diamond_mask = [(0, -out_triangle_width), (out_triangle_height, -out_triangle_width / 2),
+                    (0, 0), (-out_triangle_height, -out_triangle_width / 2)]
+
+    def draw_img(img, alpha_offset, offset_width, offset_height):
+        paste_and_mask(img, alpha_offset + 120,
+                       (offset_height * out_triangle_height, offset_width * out_triangle_width),
+                       diamond_mask)
+        paste_and_mask(img, alpha_offset, ((offset_height + 2) * out_triangle_height,
+                                           offset_width * out_triangle_width), diamond_mask)
+        paste_and_mask(img, alpha_offset - 120, ((offset_height + 4) * out_triangle_height,
+                                                 offset_width * out_triangle_width), diamond_mask)
+
+    draw_img(images[0], 0, 1.0, 2)
+    draw_img(images[1], 60, 1.5, 1)
+    draw_img(images[2], 0, 2.0, 2)
+    draw_img(images[3], 60, 2.5, 1)
+
+    ImageDraw.Draw(flexagon).line([
+        (out_triangle_height, out_triangle_width / 2),
+        (0, 0),
+        (0, out_triangle_width * 2.5),
+        (2 * out_triangle_height, out_triangle_width * 2.5),
+        (2 * out_triangle_height, out_triangle_width * 2),
+        (2 * out_triangle_height, out_triangle_width * 2.5),
+        (4 * out_triangle_height, out_triangle_width * 2.5),
+        (4 * out_triangle_height, out_triangle_width * 2),
+        (4 * out_triangle_height, out_triangle_width * 2.5),
+        (6 * out_triangle_height, out_triangle_width * 2.5),
+        (6 * out_triangle_height, out_triangle_width * 2),
+    ], fill=(0, 0, 0))
+
+    flexagon.save(output_file)
 
 
-    mask_lozi = [(0, 0), (-triangle_width / 2, triangle_height), (-triangle_width, 0),
-                 (-triangle_width / 2, -triangle_height)]
-
-    paste_and_mask(images[0], 000, (1.0 * triangle_width, 2 * triangle_height), mask_lozi)
-    paste_and_mask(images[0], 120, (1.0 * triangle_width, 4 * triangle_height), mask_lozi)
-    paste_and_mask(images[0], 240, (1.0 * triangle_width, 6 * triangle_height), mask_lozi)
-    paste_and_mask(images[1], 000, (1.5 * triangle_width, 1 * triangle_height), mask_lozi)
-    paste_and_mask(images[1], 120, (1.5 * triangle_width, 3 * triangle_height), mask_lozi)
-    paste_and_mask(images[1], 240, (1.5 * triangle_width, 5 * triangle_height), mask_lozi)
-    paste_and_mask(images[2], 000, (2.0 * triangle_width, 2 * triangle_height), mask_lozi)
-    paste_and_mask(images[2], 120, (2.0 * triangle_width, 4 * triangle_height), mask_lozi)
-    paste_and_mask(images[2], 240, (2.0 * triangle_width, 6 * triangle_height), mask_lozi)
-    paste_and_mask(images[3], 000, (2.5 * triangle_width, 1 * triangle_height), mask_lozi)
-    paste_and_mask(images[3], 120, (2.5 * triangle_width, 3 * triangle_height), mask_lozi)
-    paste_and_mask(images[3], 240, (2.5 * triangle_width, 5 * triangle_height), mask_lozi)
-    # # each patch has three parameters:
-    # # rotation in degrees, the translation w.r.t. the centre point, and the
-    # # mask (which is designed as to be translated with the same coordinates)
-    # t1_AB = 90, (triangle_height, 1.5 * triangle_width), mask_poly_left
-    # t1_CF = -30, (0, 3.0 * triangle_width), mask_poly_left
-    # t1_DE = -150, (triangle_height, 4.5 * triangle_width), mask_poly_left
-    #
-    # t2_AB = 90, (0, 2.0 * triangle_width), mask_poly_left
-    # t2_CF = -30, (triangle_height, 3.5 * triangle_width), mask_poly_left
-    # t2_D = -150, (triangle_height, 0.5 * triangle_width), mask_poly_right_down
-    # t2_E = -150, (0, 5.0 * triangle_width), mask_poly_right_up
-    #
-    # t3_A = 150, (0, 1.0 * triangle_width), mask_poly_right_down
-    # t3_BC = 30, (triangle_height, 2.5 * triangle_width), mask_poly_left
-    # t3_EF = -90, (0, 4.0 * triangle_width), mask_poly_left
-    # t3_D = 150, (triangle_height, 5.5 * triangle_width), mask_poly_right_up
-    #
-    # for t in [t1_AB, t1_CF, t1_DE]:
-    #     paste_and_mask(images[0], *t)
-    #
-    # for t in [t2_AB, t2_CF, t2_D, t2_E]:
-    #     paste_and_mask(images[1], *t)
-    #
-    # for t in [t3_A, t3_BC, t3_EF, t3_D]:
-    #     paste_and_mask(images[2], *t)
-
-    flexagon.save(sys.argv[5])
+if __name__ == "__main__":
+    if len(sys.argv) != 6:
+        print(__doc__.format(sys.argv[0]), file=sys.stderr)
+        exit(1)
+    main(sys.argv[1:5], sys.argv[5])
